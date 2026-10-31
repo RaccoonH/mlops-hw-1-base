@@ -53,7 +53,31 @@ def business_date(explicit, interval_start):
 
 
 def validate_rows(rows, day):
-    raise NotImplementedError("Задание 2: validate_rows")
+    if len(rows) == 0:
+        raise ValueError("Empty rows")
+
+    customer_set = set()
+    for r in rows:
+        if len(r['customer_id']) == 0:
+            raise ValueError("Wrong customer_id")
+        if r['customer_id'] in customer_set:
+            raise ValueError("Not unique customer_id")
+        customer_set.add(r['customer_id'])
+
+        if 'business_date' not in r:
+            raise KeyError("No business_date")
+        if r['business_date'] != day:
+            raise ValueError("Wrong business_date")
+
+        for idx in range(len(FEATURES)):
+            feature = FEATURES[idx]
+            limits = LIMITS[idx]
+            if feature not in r:
+                raise KeyError(f"No {feature}")
+            if isinstance(r[feature], float) == False or math.isnan(r[feature]) or r[feature] < limits[0] or r[feature] > limits[1]:
+                raise ValueError(f"Wrong value {feature}")
+
+    return rows
 
 
 def validate_model(model):
@@ -79,12 +103,38 @@ def predict(rows, model):
 
 
 def infer_batches(rows, model, batch_size):
-    raise NotImplementedError("Задание 3: infer_batches")
+    if isinstance(batch_size, int) == False or isinstance(batch_size, bool) or batch_size < 1 or batch_size > 1000:
+        raise ValueError("Wrong batch_size")
 
+    result = []
+    for i in range(0, len(rows), batch_size):
+        size = min(batch_size, len(rows) - i)
+        print(f"Infer {i / batch_size} size {size}")
+        result.extend(predict(rows[i:i+size], model))
+    return result
 
 def validate_predictions(predictions, expected_ids):
-    raise NotImplementedError("Задание 4: validate_predictions")
+    customer_ids = set()
+    for p in predictions:
+        customer_ids.add(p['customer_id'])
+        if isinstance(p['score'], float) == False or p['score'] < 0 or p['score'] > 1:
+            raise ValueError("Wrong score")
+        if isinstance(p['label'], int) == False or p['label'] < 0 or p['label'] > 1:
+            raise ValueError("Wrong label")
+        if int(p['score'] >= 0.5) != p['label']:
+            raise ValueError("Wrong label")
+    if customer_ids != set(expected_ids):
+        raise ValueError("Wrong customer_ids")
 
 
 def replace_day(conn, day, model_version, predictions):
-    raise NotImplementedError("Задание 5: replace_day")
+    if len(predictions) == 0:
+        raise ValueError("Empty predictions")
+
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"{day}:{model_version}",))
+            cur.execute("DELETE FROM predictions WHERE business_date = %s AND model_version = %s", (day, model_version))
+            cur.executemany("INSERT INTO predictions (business_date, model_version, customer_id, score, label) VALUES (%s, %s, %s, %s, %s)",
+                [(day, model_version, p['customer_id'], p['score'], p['label']) for p in predictions]
+            )
